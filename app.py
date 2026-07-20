@@ -9,10 +9,67 @@ from recon_engine import reconcile_trades
 
 
 st.set_page_config(page_title="Trade Settlement Reconciliation Tool", layout="wide")
-st.title("Trade Settlement Reconciliation Tool")
-st.write(
-    "Upload a broker trade file and an internal ledger file, or use the sample data, to identify reconciliation breaks and severity levels in real time."
+
+# Import Inter from Google Fonts and apply global CSS because Streamlit
+# does not provide a native way to load external fonts. We inject a small
+# CSS block with `st.markdown(..., unsafe_allow_html=True)` so the font and
+# typography rules apply across the app (headers, body, KPI values, charts).
+_INTER_CSS = """
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+
+:root {
+    --accent: #4da8f7;
+    --text: #0f172a;
+    --muted: #6b7280;
+}
+
+html, body, [class*="css"] {
+    font-family: 'Inter', sans-serif !important;
+    color: var(--text) !important;
+}
+
+/* Title styling: slightly heavier, tightened letter spacing */
+h1 {
+    font-weight: 700 !important;
+    letter-spacing: -0.5px !important;
+    margin: 0 0 0.25rem 0 !important;
+}
+
+/* Body and descriptions lighter weight for contrast */
+p, h2, h3 {
+    font-weight: 400 !important;
+}
+
+/* KPI numbers: larger and bolder to act as anchors */
+div[data-testid="metric-container"] .stMetricValue, .stMetric .value {
+    font-size: 2.2rem !important;
+    font-weight: 700 !important;
+}
+
+/* Subtle card/background shading and soft borders */
+section.main > div[role="main"] {
+    background-color: #ffffff !important;
+}
+
+</style>
+"""
+
+st.markdown(_INTER_CSS, unsafe_allow_html=True)
+
+# Replace default title with HTML-controlled heading for tighter typography control
+st.markdown(
+        "<h1 style='font-family: Inter, sans-serif;'>Trade Settlement Reconciliation Tool</h1>",
+        unsafe_allow_html=True,
 )
+st.write(
+        "Upload a broker trade file and an internal ledger file, or use the sample data, to identify reconciliation breaks and severity levels in real time."
+)
+
+ACCENT_COLOR = "#4da8f7"
+HIGH_COLOR = "#dc2626"
+MEDIUM_COLOR = "#f59e0b"
+LOW_COLOR = "#60a5fa"
 
 use_sample = st.checkbox("Use sample data from this project", value=True)
 
@@ -76,6 +133,8 @@ col1.metric("Total unique trades", total_trades)
 col2.metric("Total breaks detected", total_breaks)
 col3.metric("Break rate", f"{break_rate}%")
 
+st.write("")
+
 breaks["break_date"] = pd.to_datetime(
     breaks["broker_settlement_date"].fillna(breaks["ledger_settlement_date"])
 )
@@ -99,8 +158,13 @@ fig_severity = px.bar(
     x="severity",
     y="count",
     color="severity",
-    color_discrete_map={"HIGH": "red", "MEDIUM": "orange", "LOW": "green"},
+    color_discrete_map={"HIGH": HIGH_COLOR, "MEDIUM": MEDIUM_COLOR, "LOW": LOW_COLOR},
     labels={"count": "Number of breaks"},
+)
+fig_severity.update_layout(
+    plot_bgcolor="rgba(0,0,0,0)",
+    paper_bgcolor="rgba(0,0,0,0)",
+    font=dict(color="#0f172a", family="Inter, sans-serif"),
 )
 st.plotly_chart(fig_severity, use_container_width=True)
 
@@ -109,7 +173,13 @@ fig_type = px.bar(
     break_type_counts,
     x="break_type",
     y="count",
+    color_discrete_sequence=[ACCENT_COLOR],
     labels={"count": "Number of breaks", "break_type": "Break type"},
+)
+fig_type.update_layout(
+    plot_bgcolor="rgba(0,0,0,0)",
+    paper_bgcolor="rgba(0,0,0,0)",
+    font=dict(color="#0f172a", family="Inter, sans-serif"),
 )
 st.plotly_chart(fig_type, use_container_width=True)
 
@@ -120,6 +190,12 @@ fig_trend = px.line(
     y="count",
     labels={"break_date": "Settlement date", "count": "Break count"},
     markers=True,
+)
+fig_trend.update_traces(line_color=ACCENT_COLOR)
+fig_trend.update_layout(
+    plot_bgcolor="rgba(0,0,0,0)",
+    paper_bgcolor="rgba(0,0,0,0)",
+    font=dict(color="#0f172a", family="Inter, sans-serif"),
 )
 st.plotly_chart(fig_trend, use_container_width=True)
 
