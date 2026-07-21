@@ -1,16 +1,17 @@
 import pandas as pd
 
 
-def load_trades(path: str) -> pd.DataFrame:
-    """Load a CSV file into a pandas DataFrame and normalize the columns."""
-    df = pd.read_csv(path, dtype={"trade_id": str})
+def load_trades(source) -> pd.DataFrame:
+    """Load trades from either a file path or a Streamlit UploadedFile."""
+    df = pd.read_csv(source, dtype={"trade_id": str})
+
     df = df.drop_duplicates().copy()
-    df["trade_date"] = pd.to_datetime(df["trade_date"]) 
-    df["settlement_date"] = pd.to_datetime(df["settlement_date"]) 
+    df["trade_date"] = pd.to_datetime(df["trade_date"])
+    df["settlement_date"] = pd.to_datetime(df["settlement_date"])
     df["quantity"] = pd.to_numeric(df["quantity"], errors="coerce").fillna(0).astype(int)
     df["price"] = pd.to_numeric(df["price"], errors="coerce").fillna(0.0)
-    return df
 
+    return df
 
 def classify_severity(break_type: str, broker_value=None, ledger_value=None) -> str:
     """Classify break severity based on type and mismatch size."""

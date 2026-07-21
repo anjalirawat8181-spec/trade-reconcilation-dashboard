@@ -114,14 +114,31 @@ if broker_file is None or ledger_file is None:
     st.info("Please upload both CSV files or enable sample data.")
     st.stop()
 
-if not use_sample:
-    breaks = reconcile_uploaded_files(broker_file, ledger_file)
-    broker_df = load_dataframe(broker_file)
-    ledger_df = load_dataframe(ledger_file)
+if use_sample:
+    # Sample CSV files stored in the project
+    breaks = reconcile_trades("broker_trades.csv", "internal_ledger.csv")
+    broker_df = pd.read_csv("broker_trades.csv", dtype={"trade_id": str})
+    ledger_df = pd.read_csv("internal_ledger.csv", dtype={"trade_id": str})
 else:
-    breaks = reconcile_trades(broker_file, ledger_file)
-    broker_df = load_dataframe(broker_file)
-    ledger_df = load_dataframe(ledger_file)
+    # Uploaded CSV files
+    broker_file.seek(0)
+    ledger_file.seek(0)
+
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".csv") as temp_broker:
+        temp_broker.write(broker_file.getvalue())
+        broker_path = temp_broker.name
+
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".csv") as temp_ledger:
+        temp_ledger.write(ledger_file.getvalue())
+        ledger_path = temp_ledger.name
+
+    try:
+        breaks = reconcile_trades(broker_path, ledger_path)
+        broker_df = pd.read_csv(broker_path, dtype={"trade_id": str})
+        ledger_df = pd.read_csv(ledger_path, dtype={"trade_id": str})
+    finally:
+        os.remove(broker_path)
+        os.remove(ledger_path)
 
 all_trade_ids = pd.Index(broker_df["trade_id"]).append(pd.Index(ledger_df["trade_id"]))
 total_trades = len(all_trade_ids.unique())
