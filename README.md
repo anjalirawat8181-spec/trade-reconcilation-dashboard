@@ -64,7 +64,7 @@ tests/            pytest suite for the engine and metrics
 
 ## Run locally
 
-Python 3.10 (see `runtime.txt`).
+Python 3.10 or newer.
 
 ```bash
 python -m venv .venv
@@ -83,6 +83,10 @@ python -m pytest
 ```
 
 GitHub Actions runs the same suite on every push (`.github/workflows/tests.yml`).
+
+## Deployment
+
+The app is deployed on Streamlit Community Cloud with `app.py` as the entry point. The Python version is chosen in **Advanced settings** when deploying (Python 3.12 recommended); the platform ignores `runtime.txt`. Only `requirements.txt` (runtime packages) is installed there; test tools live in `requirements-dev.txt`.
 
 ## Limitations / future work
 
