@@ -11,7 +11,7 @@ _LAYOUT = dict(
     plot_bgcolor="rgba(0,0,0,0)",
     font=dict(family=t.FONT_FAMILY, color=t.NAVY, size=12),
     margin=dict(l=8, r=8, t=8, b=8),
-    legend=dict(orientation="h", y=-0.18, x=0, title_text="", font=dict(color=t.MUTED)),
+    legend=dict(orientation="h", y=-0.18, x=0, title_text="", font=dict(color=t.MUTED, family=t.FONT_FAMILY)),
     hoverlabel=dict(bgcolor=t.NAVY, font=dict(color="#fff", family=t.FONT_FAMILY), bordercolor=t.NAVY),
     height=320,
 )
@@ -45,7 +45,7 @@ def severity_donut(breaks: pd.DataFrame) -> go.Figure:
     fig.update_layout(**_LAYOUT, showlegend=True)
     fig.add_annotation(
         text=f"<b>{int(counts.sum())}</b><br><span style='font-size:11px'>breaks</span>",
-        showarrow=False, font=dict(size=24, color=t.NAVY),
+        showarrow=False, font=dict(size=28, color=t.NAVY, family=t.HEADING_FONT),
     )
     return fig
 
@@ -57,7 +57,7 @@ def breaks_by_type_bar(breaks: pd.DataFrame) -> go.Figure:
     table = breaks.pivot_table(index="break_type", columns="severity", values="trade_id",
                                aggfunc="count", fill_value=0)
     table = table.reindex(columns=list(t.SEVERITY_ORDER), fill_value=0)
-    table = table.loc[table.sum(axis=1).sort_values(ascending=True).index]  # plotly draws bottom-up
+    table = table.loc[table.sum(axis=1).sort_values(ascending=True).index]
     labels = [t.BREAK_TYPE_LABELS.get(k, k) for k in table.index]
     fig = go.Figure()
     for sev in t.SEVERITY_ORDER:

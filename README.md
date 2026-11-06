@@ -41,8 +41,8 @@ Severity (first matching rule wins; thresholds live in `ReconConfig`):
 
 | Severity | Rule |
 |---|---|
-| **HIGH** | trade missing on either side, **or** notional (quantity × price) ≥ 100,000 for any break |
-| **MEDIUM** | quantity diff > 5 units, price diff > 25 bps, or any counterparty mismatch |
+| **HIGH** | trade missing on either side, **or** notional (quantity × price) ≥ ₹10,00,000 for any break |
+| **MEDIUM** | notional (quantity × price) ≥ ₹1,00,000, **or** quantity diff > 5 units, price diff > 25 bps, or any counterparty mismatch |
 | **LOW** | settlement date differences, and quantity/price differences within the minor limits above |
 
 A trade that differs on several fields is reported once, with the type of its most severe difference.
@@ -89,6 +89,6 @@ GitHub Actions runs the same suite on every push (`.github/workflows/tests.yml`)
 - **Synthetic data only.** Counterparties and trades are generated; the sample break rate (~3%) is designed, not observed.
 - **No persistence.** Statuses and notes live in `st.session_state` and are lost on refresh; there is no audit trail or multi-user workflow.
 - **Simplified matching.** One record per `trade_id`; no partial fills, many-to-one matching, fuzzy keys, or symbol/price-currency checks. Duplicate IDs are collapsed (first row kept), not reported as breaks.
-- **Single currency.** Notional is assumed to be USD; no FX or business-day calendar for date tolerances (calendar days).
-- **Fixed severity thresholds.** Tolerances are adjustable in the UI; the notional threshold and minor limits are only configurable in code.
+- **Single currency.** Notional is assumed to be INR; no FX or business-day calendar for date tolerances (calendar days).
+- **Fixed severity thresholds.** Tolerances are adjustable in the UI; the notional thresholds and minor limits are only configurable in code.
 - Future work: persistent case management, role-based access, scheduled runs, additional break types and a database-backed history.

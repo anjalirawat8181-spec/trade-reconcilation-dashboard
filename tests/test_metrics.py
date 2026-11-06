@@ -1,7 +1,7 @@
 """Tests for the pure KPI helpers."""
 import pandas as pd
 
-from metrics import attach_status, compute_kpis, format_currency, status_counts
+from metrics import attach_status, compute_kpis, format_currency, format_inr, status_counts
 
 
 def sample_breaks() -> pd.DataFrame:
@@ -36,6 +36,11 @@ def test_zero_trades_has_no_match_rate():
     assert compute_kpis(b, 0, None).match_rate_pct is None
 
 
-def test_format_currency():
-    assert format_currency(1234567.8) == "$1,234,568"
-    assert format_currency(None) == "—"
+def test_format_inr():
+    assert format_inr(12345.67) == "₹12,345.67"
+    assert format_inr(1234567.8) == "₹12,34,567.80"
+    assert format_inr(1234567890.5) == "₹1,23,45,67,890.50"
+    assert format_inr(-1234567.8) == "-₹12,34,567.80"
+    assert format_inr(0.5) == "₹0.50"
+    assert format_inr(None) == "—"
+    assert format_currency(1234567.8) == format_inr(1234567.8)

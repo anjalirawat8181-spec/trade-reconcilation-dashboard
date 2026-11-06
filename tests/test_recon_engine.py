@@ -39,7 +39,6 @@ def one_break(broker_over: dict, ledger_over: dict, cfg: ReconConfig | None = No
     return result.iloc[0]
 
 
-# ---- one test per break type ------------------------------------------------
 def test_no_breaks_when_identical():
     result = reconcile(trades({}), trades({}))
     assert result.empty
@@ -53,7 +52,7 @@ def test_quantity_mismatch():
 
 
 def test_price_mismatch():
-    row = one_break({}, {"price": 101.0})  # 99 bps
+    row = one_break({}, {"price": 101.0})
     assert row.break_type == "price_mismatch"
     assert row.severity == "MEDIUM"
 
@@ -85,10 +84,8 @@ def test_missing_in_ledger_has_broker_notional():
     assert pd.isna(row.ledger_quantity)
 
 
-# ---- tolerance boundaries ----------------------------------------------------
 @pytest.mark.parametrize("ledger_price,is_break", [(100.05, False), (100.06, True)])
 def test_price_tolerance_boundary_bps(ledger_price, is_break):
-    # broker 100.00 vs ledger: 5 bps of the ledger price is ~0.05
     cfg = ReconConfig(price_tolerance_bps=5.0)
     result = reconcile(trades({"price": 100.0}), trades({"price": ledger_price}), cfg)
     assert (len(result) == 1) is is_break
@@ -113,9 +110,8 @@ def test_settlement_tolerance_boundary(ledger_date, is_break):
     assert (len(result) == 1) is is_break
 
 
-# ---- severity rules ----------------------------------------------------------
 def test_high_notional_makes_any_break_high():
-    big = {"quantity": 1000, "price": 500.0}  # notional 500k
+    big = {"quantity": 1000, "price": 10_000.0}
     row = one_break(big, {**big, "settlement_date": "2026-05-05"})
     assert row.break_type == "settlement_date_mismatch"
     assert row.severity == "HIGH"
@@ -124,7 +120,7 @@ def test_high_notional_makes_any_break_high():
 
 def test_minor_quantity_and_price_are_low():
     assert one_break({}, {"quantity": 98}).severity == "LOW"
-    assert one_break({}, {"price": 100.10}).severity == "LOW"  # 10 bps
+    assert one_break({}, {"price": 100.10}).severity == "LOW"
 
 
 def test_multiple_differences_use_most_severe_field():
@@ -138,7 +134,6 @@ def test_counterparty_compare_ignores_case_and_whitespace():
     assert reconcile(trades({}), trades({"counterparty": "  alpha "})).empty
 
 
-# ---- duplicates, nulls, coercion, empty -------------------------------------
 def test_duplicate_trade_ids_are_collapsed():
     ledger = pd.concat([trades({}), trades({})], ignore_index=True)
     assert reconcile(trades({}), ledger).empty
@@ -178,7 +173,6 @@ def test_count_unique_trades():
     assert count_unique_trades(trades({}, {"trade_id": "A"}), trades({"trade_id": "A"}, {"trade_id": "B"})) == 3
 
 
-# ---- schema validation and loading ------------------------------------------
 def test_validate_reports_missing_columns():
     errors = validate_trades(trades({}).drop(columns=["counterparty", "price"]))
     assert "counterparty" in errors[0] and "price" in errors[0]

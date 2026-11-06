@@ -6,13 +6,15 @@ Colours are defined once here and reused by the CSS (styles.py), the charts
 """
 from __future__ import annotations
 
-NAVY = "#0D1B2A"          # header band, sidebar, headings
+NAVY = "#0D1B2A"
 MID_NAVY = "#1B3A5C"
-ACCENT = "#7399C6"        # primary accent, links, LOW severity
-TINT = "#E8EEF5"          # card / table backgrounds
-PAGE_BG = "#F5F7FA"
-BORDER = "#D5DDE6"
+ACCENT = "#7399C6"
+TINT = "#E8EEF5"
+PAGE_BG = "#FFFFFF"
+BORDER = "#E5E7EB"
 MUTED = "#5B6B7C"
+CURRENCY_SYMBOL = "₹"
+CURRENCY_CODE = "INR"
 
 HIGH = "#B3261E"
 MEDIUM = "#C98A1B"
@@ -21,7 +23,8 @@ LOW = "#7399C6"
 SEVERITY_COLORS: dict[str, str] = {"HIGH": HIGH, "MEDIUM": MEDIUM, "LOW": LOW}
 SEVERITY_ORDER: tuple[str, ...] = ("HIGH", "MEDIUM", "LOW")
 
-FONT_FAMILY = "Inter, -apple-system, 'Segoe UI', sans-serif"
+FONT_FAMILY = "'Tinos', 'Times New Roman', Times, serif"
+HEADING_FONT = "Newsreader, Georgia, 'Times New Roman', serif"
 RADIUS_PX = 8
 
 BREAK_TYPE_LABELS: dict[str, str] = {

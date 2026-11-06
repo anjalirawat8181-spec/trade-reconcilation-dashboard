@@ -28,9 +28,6 @@ st.set_page_config(page_title=PRODUCT_NAME, page_icon="▦", layout="wide")
 inject_styles()
 
 
-# --------------------------------------------------------------------------
-# Data loading (sidebar)
-# --------------------------------------------------------------------------
 @dataclass
 class Dataset:
     """Validated broker + ledger frames, plus notes about data quality."""
@@ -101,9 +98,6 @@ def sidebar_controls() -> tuple[Optional[Dataset], engine.ReconConfig]:
     return dataset, cfg
 
 
-# --------------------------------------------------------------------------
-# Session state: investigation status and notes
-# --------------------------------------------------------------------------
 def init_state(breaks: pd.DataFrame) -> None:
     """Reset statuses/notes when the set of breaks changes (new data or tolerances)."""
     signature = hash(tuple(breaks["trade_id"]))
@@ -119,9 +113,6 @@ def _save_note(trade_id: str) -> None:
     st.session_state.notes[trade_id] = st.session_state[f"note_{trade_id}"]
 
 
-# --------------------------------------------------------------------------
-# Presentation helpers
-# --------------------------------------------------------------------------
 def render_header() -> None:
     st.markdown(
         f"""<div class="wb-header"><div>
@@ -137,8 +128,8 @@ def severity_badge(severity: str) -> str:
 
 
 def kpi_card(label: str, value: str, note: str = "") -> str:
-    return (f'<div class="kpi"><div class="kpi-label">{label}</div>'
-            f'<div class="kpi-value">{value}</div><div class="kpi-note">{note}&nbsp;</div></div>')
+    return (f'<div class="kpi"><div class="kpi-value">{value}</div>'
+            f'<div class="kpi-label">{label}</div><div class="kpi-note">{note}&nbsp;</div></div>')
 
 
 def fmt_qty(v) -> str:
@@ -146,7 +137,7 @@ def fmt_qty(v) -> str:
 
 
 def fmt_price(v) -> str:
-    return DASH if pd.isna(v) else f"${v:,.2f}"
+    return DASH if pd.isna(v) else metrics.format_inr(v)
 
 
 def fmt_date(v) -> str:
@@ -157,9 +148,6 @@ def fmt_text(v) -> str:
     return DASH if pd.isna(v) or v == "" else escape(str(v))
 
 
-# --------------------------------------------------------------------------
-# Tabs
-# --------------------------------------------------------------------------
 def tab_overview(breaks: pd.DataFrame, kpis: metrics.Kpis, total_trades: int) -> None:
     match = DASH if kpis.match_rate_pct is None else f"{kpis.match_rate_pct:.1f}%"
     age = DASH if kpis.oldest_open_days is None else f"{kpis.oldest_open_days}"
@@ -167,7 +155,7 @@ def tab_overview(breaks: pd.DataFrame, kpis: metrics.Kpis, total_trades: int) ->
         '<div class="kpi-grid">'
         + kpi_card("Match rate", match, f"{total_trades:,} unique trades")
         + kpi_card("Open breaks", f"{kpis.open_breaks:,}", f"of {len(breaks):,} total")
-        + kpi_card("Open notional exposure", metrics.format_currency(kpis.open_notional), "USD, open breaks")
+        + kpi_card("Open notional exposure", metrics.format_inr(kpis.open_notional, compact=True), "INR, open breaks")
         + kpi_card("Oldest open break", f"{age} days" if age != DASH else DASH, "vs. latest settlement date")
         + "</div>",
         unsafe_allow_html=True,
@@ -194,9 +182,9 @@ def tab_overview(breaks: pd.DataFrame, kpis: metrics.Kpis, total_trades: int) ->
 
 TABLE_COLUMNS: dict[str, str] = {
     "trade_id": "Trade ID", "severity": "Severity", "break_type": "Break type", "status": "Status",
-    "symbol": "Symbol", "notional": "Notional (USD)",
+    "symbol": "Symbol", "notional": "Notional (₹)",
     "broker_quantity": "Qty (Broker)", "ledger_quantity": "Qty (Ledger)",
-    "broker_price": "Price (Broker)", "ledger_price": "Price (Ledger)",
+    "broker_price": "Price (Broker, ₹)", "ledger_price": "Price (Ledger, ₹)",
     "broker_settlement_date": "Settles (Broker)", "ledger_settlement_date": "Settles (Ledger)",
     "broker_counterparty": "Counterparty (Broker)", "ledger_counterparty": "Counterparty (Ledger)",
 }
@@ -212,12 +200,14 @@ def styled_table(df: pd.DataFrame):
     view = df[list(TABLE_COLUMNS)].copy()
     view["break_type"] = view["break_type"].map(t.BREAK_TYPE_LABELS)
     formats = {
-        "notional": "${:,.0f}", "broker_quantity": "{:,.0f}", "ledger_quantity": "{:,.0f}",
-        "broker_price": "${:,.2f}", "ledger_price": "${:,.2f}",
+        "notional": lambda value: metrics.format_inr(value),
+        "broker_quantity": "{:,.0f}", "ledger_quantity": "{:,.0f}",
+        "broker_price": lambda value: metrics.format_inr(value),
+        "ledger_price": lambda value: metrics.format_inr(value),
         "broker_settlement_date": "{:%Y-%m-%d}", "ledger_settlement_date": "{:%Y-%m-%d}",
     }
     styler = view.style.format(formats, na_rep=DASH)
-    apply_cells = getattr(styler, "map", None) or styler.applymap  # pandas >= 2.1 renamed applymap
+    apply_cells = getattr(styler, "map", None) or styler.applymap
     return apply_cells(_severity_style, subset=["severity"])
 
 
@@ -318,25 +308,23 @@ Rules are applied top to bottom; the first that matches wins.
 <table>
 <tr><th>#</th><th>Rule</th><th>Severity</th></tr>
 <tr><td>1</td><td>Trade is missing on either side</td><td>{severity_badge("HIGH")}</td></tr>
-<tr><td>2</td><td>Notional (quantity × broker price) is at least <b>${cfg.high_notional_threshold:,.0f}</b>, for any break type</td><td>{severity_badge("HIGH")}</td></tr>
-<tr><td>3</td><td>Quantity difference above the minor limit (<b>{cfg.minor_quantity:g}</b> units), price difference above the minor limit (<b>{cfg.minor_price_bps:g} bps</b>), or any counterparty mismatch</td><td>{severity_badge("MEDIUM")}</td></tr>
-<tr><td>4</td><td>Settlement date differences, and quantity or price differences within the minor limits</td><td>{severity_badge("LOW")}</td></tr>
+<tr><td>2</td><td>Notional (quantity × broker price) is at least <b>{metrics.format_inr(cfg.high_notional_threshold)}</b>, for any break type</td><td>{severity_badge("HIGH")}</td></tr>
+<tr><td>3</td><td>Notional (quantity × broker price) is at least <b>{metrics.format_inr(cfg.medium_notional_threshold)}</b>, for any break type</td><td>{severity_badge("MEDIUM")}</td></tr>
+<tr><td>4</td><td>Quantity difference above the minor limit (<b>{cfg.minor_quantity:g}</b> units), price difference above the minor limit (<b>{cfg.minor_price_bps:g} bps</b>), or any counterparty mismatch</td><td>{severity_badge("MEDIUM")}</td></tr>
+<tr><td>5</td><td>Settlement date differences, and quantity or price differences within the minor limits</td><td>{severity_badge("LOW")}</td></tr>
 </table>
 
 ### Tolerances
 Tolerances decide **whether** a difference is a break; they are set in the sidebar. A difference *equal* to the tolerance is not a break. The notional threshold and minor limits decide **how severe** a break is; they are fixed defaults in <code>ReconConfig</code>.
 
 ### Data handling
-Duplicate <code>trade_id</code>s are collapsed (first row kept) and rows without a <code>trade_id</code> are ignored; both are reported in the sidebar. Unparseable numbers or dates become missing values, so a missing value against a real one is a break. "Oldest open break" is measured from the break's settlement date to the latest settlement date in the data (not today's date), so the sample stays meaningful. Notional is shown in USD; all sample data is synthetic.
+Duplicate <code>trade_id</code>s are collapsed (first row kept) and rows without a <code>trade_id</code> are ignored; both are reported in the sidebar. Unparseable numbers or dates become missing values, so a missing value against a real one is a break. "Oldest open break" is measured from the break's settlement date to the latest settlement date in the data (not today's date), so the sample stays meaningful. Notional is shown in INR; all sample data is synthetic.
 
 </div>""",
         unsafe_allow_html=True,
     )
 
 
-# --------------------------------------------------------------------------
-# Main
-# --------------------------------------------------------------------------
 def main() -> None:
     render_header()
     dataset, cfg = sidebar_controls()

@@ -6,7 +6,13 @@ from typing import Mapping, Optional
 
 import pandas as pd
 
+import theme as t
 from recon_engine import clean_trades
+
+try:
+    from babel.numbers import format_currency as _babel_format_currency
+except Exception:
+    _babel_format_currency = None
 
 STATUSES: tuple[str, ...] = ("Open", "Investigating", "Resolved")
 DEFAULT_STATUS = "Open"
@@ -64,6 +70,57 @@ def status_counts(breaks: pd.DataFrame) -> dict[str, int]:
     return {s: int(counts.get(s, 0)) for s in STATUSES}
 
 
+def _indian_group(value: int) -> str:
+    """Format an integer using Indian grouping (e.g. 1234567 -> 12,34,567)."""
+    s = str(abs(int(value)))
+    if len(s) <= 3:
+        return s
+    last_three = s[-3:]
+    rest = s[:-3]
+    if len(rest) <= 2:
+        return f"{rest},{last_three}"
+    chunks: list[str] = []
+    while len(rest) > 2:
+        chunks.append(rest[-2:])
+        rest = rest[:-2]
+    if rest:
+        chunks.append(rest)
+    chunks.reverse()
+    return ",".join(chunks + [last_three])
+
+
+def format_inr(value: Optional[float], compact: bool = False) -> str:
+    """Format rupee values with Indian grouping. ``compact=True`` returns L/Cr suffixes."""
+    if value is None or pd.isna(value):
+        return "—"
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return "—"
+
+    if not compact and _babel_format_currency is not None:
+        try:
+            return _babel_format_currency(number, currency=t.CURRENCY_CODE, locale="en_IN")
+        except Exception:
+            pass
+
+    if compact:
+        abs_value = abs(number)
+        if abs_value >= 1_00_00_000:
+            return f"{('-' if number < 0 else '')}{t.CURRENCY_SYMBOL}{abs_value / 1_00_00_000:.1f} Cr"
+        if abs_value >= 1_00_000:
+            return f"{('-' if number < 0 else '')}{t.CURRENCY_SYMBOL}{abs_value / 1_00_000:.1f} L"
+        return f"{('-' if number < 0 else '')}{t.CURRENCY_SYMBOL}{abs_value:,.0f}"
+
+    sign = "-" if number < 0 else ""
+    abs_value = abs(number)
+    integer_part = int(abs_value)
+    decimals = abs_value - integer_part
+    integer_str = _indian_group(integer_part)
+    decimal_str = f"{decimals:.2f}"[2:]
+    return f"{sign}{t.CURRENCY_SYMBOL}{integer_str}.{decimal_str}"
+
+
 def format_currency(value: Optional[float]) -> str:
-    """``1234567.8`` -> ``$1,234,568``; None/NaN -> an em dash."""
-    return "—" if value is None or pd.isna(value) else f"${value:,.0f}"
+    """Compatibility alias for the INR formatter used throughout the app."""
+    return format_inr(value)

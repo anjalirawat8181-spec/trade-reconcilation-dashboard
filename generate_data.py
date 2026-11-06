@@ -15,26 +15,27 @@ import pandas as pd
 
 SEED = 42
 TRADE_COUNT = 600
-BREAK_RATE = 0.03  # ~3% of trades are genuinely broken
-BENIGN_RATE = 0.02  # ~2% differ by a sub-tolerance rounding in price (not breaks)
-DUPLICATE_LEDGER_ROWS = 2  # exact duplicate rows, removed by the cleaner
+BREAK_RATE = 0.03
+BENIGN_RATE = 0.02
+DUPLICATE_LEDGER_ROWS = 2
 FIRST_TRADE_DATE = date(2026, 4, 1)
 TRADE_DAYS = 120
 
 SYMBOLS_BASE_PRICE = {
-    "AAPL": 170, "MSFT": 360, "GOOGL": 145, "AMZN": 140, "TSLA": 230,
-    "JPM": 145, "BAC": 30, "V": 235, "NVDA": 720, "DIS": 85,
-    "NFLX": 360, "KO": 60, "PFE": 42, "CSCO": 55, "CRM": 220,
-    "BA": 210, "IBM": 145, "WMT": 160, "MCD": 300, "PEP": 190,
+    "RELIANCE": 2900, "TCS": 3900, "HDFCBANK": 1700, "ICICIBANK": 1200,
+    "INFY": 1600, "SBIN": 850, "LTIM": 6100, "HINDUNILVR": 2780,
+    "BHARTIARTL": 980, "ITC": 440, "SUNPHARMA": 1650, "TATAMOTORS": 1010,
+    "AXISBANK": 1150, "POWERGRID": 320, "KOTAKBANK": 1820, "NTPC": 390,
+    "ASIANPAINT": 2800, "TATASTEEL": 160, "ULTRACEMCO": 11200, "INDUSINDBK": 1500,
+    "BAJFINANCE": 7400,
 }
 COUNTERPARTIES = [
     "Northbridge Capital", "Harbor Street Securities", "Meridian Markets",
     "Atlas Prime", "Crestline Partners", "Summit Clearing",
     "Ironwood Trading", "Bluewater Brokers", "Keystone Securities", "Pinnacle Global",
 ]
-QUANTITIES = [50, 75, 100, 150, 200, 250, 300, 400, 500]
+QUANTITIES = [10, 25, 50, 75, 100, 150, 200, 300, 500]
 
-# Mix of injected breaks (must sum to round(TRADE_COUNT * BREAK_RATE) = 18).
 BREAK_PLAN = (
     ["quantity_minor"] * 1 + ["quantity_major"] * 2
     + ["price_minor"] * 1 + ["price_major"] * 2
@@ -62,7 +63,7 @@ def generate_records(rng: random.Random, count: int = TRADE_COUNT) -> list[dict[
             "symbol": symbol,
             "quantity": rng.choice(QUANTITIES),
             "price": round(SYMBOLS_BASE_PRICE[symbol] * rng.uniform(0.94, 1.06), 2),
-            "settlement_date": _business_day(trade_date, rng.choice([1, 2])).isoformat(),
+            "settlement_date": _business_day(trade_date, 1).isoformat(),
             "counterparty": rng.choice(COUNTERPARTIES),
         })
     return records
@@ -74,9 +75,9 @@ def _apply_break(kind: str, rec: dict[str, Any], rng: random.Random) -> None:
         rec["quantity"] += rng.choice([-2, -1, 1, 2])
     elif kind == "quantity_major":
         rec["quantity"] = max(1, rec["quantity"] + rng.choice([-60, -40, 40, 60]))
-    elif kind == "price_minor":  # 10-20 bps: above tolerance, below the "minor" limit
+    elif kind == "price_minor":
         rec["price"] = round(rec["price"] * (1 + rng.choice([-1, 1]) * rng.uniform(0.0010, 0.0020)), 2)
-    elif kind == "price_major":  # 1-3%
+    elif kind == "price_major":
         rec["price"] = round(rec["price"] * (1 + rng.choice([-1, 1]) * rng.uniform(0.01, 0.03)), 2)
     elif kind == "date":
         shifted = _business_day(date.fromisoformat(rec["settlement_date"]), rng.choice([-1, 1]))
@@ -106,7 +107,7 @@ def introduce_mismatches(
         else:
             _apply_break(kind, ledger_by_id[trade_id], rng)
 
-    for trade_id in benign_ids:  # one cent: below the default 5 bps tolerance
+    for trade_id in benign_ids:
         ledger_by_id[trade_id]["price"] = round(ledger_by_id[trade_id]["price"] + rng.choice([-0.01, 0.01]), 2)
 
     broker_out = [r for r in broker if r["trade_id"] not in drop_broker]

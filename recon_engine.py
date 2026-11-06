@@ -16,6 +16,8 @@ from typing import Any, Optional
 import numpy as np
 import pandas as pd
 
+import theme as t
+
 REQUIRED_COLUMNS: tuple[str, ...] = (
     "trade_id",
     "trade_date",
@@ -38,8 +40,6 @@ BREAK_TYPES: tuple[str, ...] = (
 SEVERITIES: tuple[str, ...] = ("HIGH", "MEDIUM", "LOW")
 _SEVERITY_RANK = {name: rank for rank, name in enumerate(SEVERITIES)}
 
-# Field -> break type, in precedence order (used to pick the primary type when
-# one trade differs on several fields).
 _FIELD_BREAK_TYPE: dict[str, str] = {
     "quantity": "quantity_mismatch",
     "price": "price_mismatch",
@@ -81,14 +81,12 @@ class ReconConfig:
     price_tolerance_bps: float = 5.0
     settlement_tolerance_days: int = 0
     quantity_tolerance: float = 0.0
-    high_notional_threshold: float = 100_000.0
+    medium_notional_threshold: float = 1_000_000.0
+    high_notional_threshold: float = 10_000_000.0
     minor_price_bps: float = 25.0
     minor_quantity: float = 5.0
 
 
-# --------------------------------------------------------------------------
-# Loading, validation and cleaning
-# --------------------------------------------------------------------------
 def load_trades_csv(source: Any) -> pd.DataFrame:
     """Read a trades CSV from a path or file-like object.
 
@@ -174,9 +172,6 @@ def count_unique_trades(broker: pd.DataFrame, ledger: pd.DataFrame) -> int:
     return int(ids.nunique())
 
 
-# --------------------------------------------------------------------------
-# Field comparison (vectorised)
-# --------------------------------------------------------------------------
 def _nan_mismatch(a: pd.Series, b: pd.Series) -> pd.Series:
     """True where exactly one side is null."""
     return a.isna() ^ b.isna()
@@ -213,9 +208,6 @@ def text_mismatch_mask(b: pd.Series, l: pd.Series) -> pd.Series:
     return b.fillna("").str.casefold() != l.fillna("").str.casefold()
 
 
-# --------------------------------------------------------------------------
-# Severity
-# --------------------------------------------------------------------------
 def _notional(quantity: Any, price: Any) -> float:
     """Quantity x price, or 0.0 if either is missing."""
     if pd.isna(quantity) or pd.isna(price):
@@ -227,8 +219,13 @@ def field_severity(field: str, row: pd.Series, notional: float, cfg: ReconConfig
     """Severity and plain-English reason for one differing field of a matched trade."""
     if notional >= cfg.high_notional_threshold:
         return "HIGH", (
-            f"Notional {notional:,.0f} is at or above the HIGH threshold "
-            f"({cfg.high_notional_threshold:,.0f})."
+            f"Notional {t.CURRENCY_SYMBOL}{notional:,.0f} is at or above the HIGH threshold "
+            f"({t.CURRENCY_SYMBOL}{cfg.high_notional_threshold:,.0f})."
+        )
+    if notional >= cfg.medium_notional_threshold:
+        return "MEDIUM", (
+            f"Notional {t.CURRENCY_SYMBOL}{notional:,.0f} is at or above the MEDIUM threshold "
+            f"({t.CURRENCY_SYMBOL}{cfg.medium_notional_threshold:,.0f})."
         )
     if field == "quantity":
         gap = abs(row["quantity_broker"] - row["quantity_ledger"])
@@ -258,14 +255,10 @@ def classify_break(row: pd.Series, fields: list[str], cfg: ReconConfig) -> tuple
 
     notional = _notional(row["quantity_broker"], row["price_broker"])
     assessed = [(f, *field_severity(f, row, notional, cfg)) for f in fields]
-    # The most severe field defines the break; ties keep field precedence order.
     best = min(assessed, key=lambda a: _SEVERITY_RANK[a[1]])
     return _FIELD_BREAK_TYPE[best[0]], best[1], best[2]
 
 
-# --------------------------------------------------------------------------
-# Reconciliation
-# --------------------------------------------------------------------------
 def _empty_breaks() -> pd.DataFrame:
     return pd.DataFrame({c: pd.Series(dtype="object") for c in BREAK_COLUMNS})
 
