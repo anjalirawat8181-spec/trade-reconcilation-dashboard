@@ -1,144 +1,131 @@
+"""Generate reproducible synthetic broker and ledger trade files.
+
+Run ``python generate_data.py`` to (re)write ``broker_trades.csv`` and
+``internal_ledger.csv``. The seed is fixed, so output is identical each run.
+All data is synthetic; counterparty names are generic placeholders.
+"""
+from __future__ import annotations
+
 import random
-from datetime import datetime, timedelta
+from datetime import date, timedelta
+from typing import Any
+
+import numpy as np
 import pandas as pd
 
-# More realistic symbol set and larger counterparty universe
-SYMBOLS = [
-    "AAPL", "MSFT", "GOOGL", "AMZN", "TSLA", "JPM", "BAC", "V", "NVDA", "DIS",
-    "NFLX", "KO", "PFE", "CSCO", "CRM", "BA", "IBM", "WMT", "MCD", "PEP",
-]
+SEED = 42
+TRADE_COUNT = 600
+BREAK_RATE = 0.03  # ~3% of trades are genuinely broken
+BENIGN_RATE = 0.02  # ~2% differ by a sub-tolerance rounding in price (not breaks)
+DUPLICATE_LEDGER_ROWS = 2  # exact duplicate rows, removed by the cleaner
+FIRST_TRADE_DATE = date(2026, 4, 1)
+TRADE_DAYS = 120
+
+SYMBOLS_BASE_PRICE = {
+    "AAPL": 170, "MSFT": 360, "GOOGL": 145, "AMZN": 140, "TSLA": 230,
+    "JPM": 145, "BAC": 30, "V": 235, "NVDA": 720, "DIS": 85,
+    "NFLX": 360, "KO": 60, "PFE": 42, "CSCO": 55, "CRM": 220,
+    "BA": 210, "IBM": 145, "WMT": 160, "MCD": 300, "PEP": 190,
+}
 COUNTERPARTIES = [
-    "Goldman Sachs",
-    "Morgan Stanley",
-    "Citibank",
-    "Barclays",
-    "Deutsche Bank",
-    "UBS",
-    "Credit Suisse",
-    "HSBC",
-    "BofA Securities",
-    "Nomura",
+    "Northbridge Capital", "Harbor Street Securities", "Meridian Markets",
+    "Atlas Prime", "Crestline Partners", "Summit Clearing",
+    "Ironwood Trading", "Bluewater Brokers", "Keystone Securities", "Pinnacle Global",
 ]
+QUANTITIES = [50, 75, 100, 150, 200, 250, 300, 400, 500]
 
-BASE_DATE = datetime(2026, 4, 1)
-DATE_RANGE_DAYS = 90
-
-
-def random_trade_date():
-    return BASE_DATE + timedelta(days=random.randint(0, DATE_RANGE_DAYS))
-
-
-def random_price(symbol):
-    base = {
-        "AAPL": 170,
-        "MSFT": 360,
-        "GOOGL": 145,
-        "AMZN": 140,
-        "TSLA": 230,
-        "JPM": 145,
-        "BAC": 30,
-        "V": 235,
-        "NVDA": 720,
-        "DIS": 85,
-        "NFLX": 360,
-        "KO": 60,
-        "PFE": 42,
-        "CSCO": 55,
-        "CRM": 220,
-        "BA": 210,
-        "IBM": 145,
-        "WMT": 160,
-        "MCD": 300,
-        "PEP": 190,
-    }
-    return round(random.uniform(base[symbol] * 0.94, base[symbol] * 1.06), 2)
+# Mix of injected breaks (must sum to round(TRADE_COUNT * BREAK_RATE) = 18).
+BREAK_PLAN = (
+    ["quantity_minor"] * 1 + ["quantity_major"] * 2
+    + ["price_minor"] * 1 + ["price_major"] * 2
+    + ["date"] * 5
+    + ["counterparty"] * 3
+    + ["missing_in_broker"] * 2 + ["missing_in_ledger"] * 2
+)
 
 
-def random_quantity():
-    return random.choice([50, 75, 100, 150, 200, 250, 300, 400, 500])
+def _business_day(start: date, offset: int) -> date:
+    """Return ``start`` shifted by ``offset`` business days."""
+    return pd.Timestamp(np.busday_offset(start.isoformat(), offset, roll="forward")).date()
 
 
-def generate_records(count=500):
+def generate_records(rng: random.Random, count: int = TRADE_COUNT) -> list[dict[str, Any]]:
+    """Create ``count`` clean trades (identical on broker and ledger sides)."""
+    symbols = list(SYMBOLS_BASE_PRICE)
     records = []
     for i in range(1, count + 1):
-        symbol = random.choice(SYMBOLS)
-        trade_date = random_trade_date()
-        quantity = random_quantity()
-        price = random_price(symbol)
-        settlement_date = trade_date + timedelta(days=random.choice([1, 2, 3]))
-        records.append(
-            {
-                "trade_id": f"T{i:05d}",
-                "trade_date": trade_date.strftime("%Y-%m-%d"),
-                "symbol": symbol,
-                "quantity": quantity,
-                "price": price,
-                "settlement_date": settlement_date.strftime("%Y-%m-%d"),
-                "counterparty": random.choice(COUNTERPARTIES),
-            }
-        )
+        symbol = rng.choice(symbols)
+        trade_date = _business_day(FIRST_TRADE_DATE, rng.randint(0, TRADE_DAYS))
+        records.append({
+            "trade_id": f"T{i:05d}",
+            "trade_date": trade_date.isoformat(),
+            "symbol": symbol,
+            "quantity": rng.choice(QUANTITIES),
+            "price": round(SYMBOLS_BASE_PRICE[symbol] * rng.uniform(0.94, 1.06), 2),
+            "settlement_date": _business_day(trade_date, rng.choice([1, 2])).isoformat(),
+            "counterparty": rng.choice(COUNTERPARTIES),
+        })
     return records
 
 
-def introduce_mismatches(broker_records, ledger_records):
-    # Keep the break rate realistic, around 12-18% of trades.
-    mismatch_count = int(len(broker_records) * 0.15)
-    mismatch_ids = random.sample([r["trade_id"] for r in broker_records], mismatch_count)
-
-    for trade_id in mismatch_ids:
-        action = random.choices(
-            ["date", "price_low", "quantity_low", "price_high", "quantity_high", "missing"],
-            weights=[0.30, 0.20, 0.20, 0.05, 0.05, 0.20],
-            k=1,
-        )[0]
-
-        if action == "missing":
-            if random.random() < 0.5:
-                ledger_records = [r for r in ledger_records if r["trade_id"] != trade_id]
-            else:
-                broker_records = [r for r in broker_records if r["trade_id"] != trade_id]
-            continue
-
-        for record in ledger_records:
-            if record["trade_id"] != trade_id:
-                continue
-
-            if action == "date":
-                record["settlement_date"] = (
-                    datetime.strptime(record["settlement_date"], "%Y-%m-%d")
-                    + timedelta(days=random.choice([-1, 1]))
-                ).strftime("%Y-%m-%d")
-            elif action == "price_low":
-                record["price"] = round(record["price"] * random.uniform(0.995, 1.005), 2)
-            elif action == "quantity_low":
-                record["quantity"] = max(1, record["quantity"] + random.choice([-2, -1, 1, 2, 3]))
-            elif action == "price_high":
-                record["price"] = round(record["price"] * random.uniform(0.93, 0.97), 2)
-            elif action == "quantity_high":
-                record["quantity"] = max(1, record["quantity"] + random.choice([-80, -60, 60, 80]))
-            break
-
-    duplicate_ids = random.sample([r["trade_id"] for r in ledger_records], min(10, len(ledger_records)))
-    for trade_id in duplicate_ids:
-        for record in ledger_records:
-            if record["trade_id"] == trade_id:
-                ledger_records.append(record.copy())
-                break
-
-    return broker_records, ledger_records
+def _apply_break(kind: str, rec: dict[str, Any], rng: random.Random) -> None:
+    """Mutate a ledger record in place to create the requested break."""
+    if kind == "quantity_minor":
+        rec["quantity"] += rng.choice([-2, -1, 1, 2])
+    elif kind == "quantity_major":
+        rec["quantity"] = max(1, rec["quantity"] + rng.choice([-60, -40, 40, 60]))
+    elif kind == "price_minor":  # 10-20 bps: above tolerance, below the "minor" limit
+        rec["price"] = round(rec["price"] * (1 + rng.choice([-1, 1]) * rng.uniform(0.0010, 0.0020)), 2)
+    elif kind == "price_major":  # 1-3%
+        rec["price"] = round(rec["price"] * (1 + rng.choice([-1, 1]) * rng.uniform(0.01, 0.03)), 2)
+    elif kind == "date":
+        shifted = _business_day(date.fromisoformat(rec["settlement_date"]), rng.choice([-1, 1]))
+        rec["settlement_date"] = shifted.isoformat()
+    elif kind == "counterparty":
+        rec["counterparty"] = rng.choice([c for c in COUNTERPARTIES if c != rec["counterparty"]])
 
 
-def save_csv(records, filename):
-    df = pd.DataFrame(records)
-    df.to_csv(filename, index=False)
+def introduce_mismatches(
+    broker: list[dict[str, Any]], ledger: list[dict[str, Any]], rng: random.Random
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Inject breaks, sub-tolerance noise and exact duplicates into the ledger side."""
+    ids = [r["trade_id"] for r in broker]
+    plan = list(BREAK_PLAN)
+    rng.shuffle(plan)
+    chosen = rng.sample(ids, len(plan) + round(len(ids) * BENIGN_RATE))
+    break_ids, benign_ids = chosen[: len(plan)], chosen[len(plan):]
+
+    ledger_by_id = {r["trade_id"]: r for r in ledger}
+    drop_broker: set[str] = set()
+    drop_ledger: set[str] = set()
+    for trade_id, kind in zip(break_ids, plan):
+        if kind == "missing_in_broker":
+            drop_broker.add(trade_id)
+        elif kind == "missing_in_ledger":
+            drop_ledger.add(trade_id)
+        else:
+            _apply_break(kind, ledger_by_id[trade_id], rng)
+
+    for trade_id in benign_ids:  # one cent: below the default 5 bps tolerance
+        ledger_by_id[trade_id]["price"] = round(ledger_by_id[trade_id]["price"] + rng.choice([-0.01, 0.01]), 2)
+
+    broker_out = [r for r in broker if r["trade_id"] not in drop_broker]
+    ledger_out = [r for r in ledger if r["trade_id"] not in drop_ledger]
+    for rec in rng.sample(ledger_out, DUPLICATE_LEDGER_ROWS):
+        ledger_out.append(dict(rec))
+    return broker_out, ledger_out
+
+
+def save_csv(records: list[dict[str, Any]], filename: str) -> None:
+    """Write records to CSV."""
+    pd.DataFrame(records).to_csv(filename, index=False)
     print(f"Saved {len(records)} records to {filename}")
 
 
 if __name__ == "__main__":
-    broker = generate_records(count=500)
-    ledger = [dict(r) for r in broker]
-
-    broker, ledger = introduce_mismatches(broker, ledger)
-
-    save_csv(broker, "broker_trades.csv")
-    save_csv(ledger, "internal_ledger.csv")
+    generator = random.Random(SEED)
+    broker_records = generate_records(generator)
+    ledger_records = [dict(r) for r in broker_records]
+    broker_records, ledger_records = introduce_mismatches(broker_records, ledger_records, generator)
+    save_csv(broker_records, "broker_trades.csv")
+    save_csv(ledger_records, "internal_ledger.csv")

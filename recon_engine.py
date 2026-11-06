@@ -1,163 +1,358 @@
+"""Pure reconciliation engine: broker trades vs. internal ledger.
+
+No Streamlit (or any UI) imports live here. The public entry point is
+:func:`reconcile`, which takes two DataFrames and a :class:`ReconConfig` and
+returns one row per broken trade.
+
+Matching key: ``trade_id``. A trade present on both sides is compared field by
+field (quantity, price, settlement date, counterparty). A trade present on one
+side only is a ``missing_in_*`` break.
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Any, Optional
+
+import numpy as np
 import pandas as pd
 
+REQUIRED_COLUMNS: tuple[str, ...] = (
+    "trade_id",
+    "trade_date",
+    "symbol",
+    "quantity",
+    "price",
+    "settlement_date",
+    "counterparty",
+)
 
-def load_trades(source) -> pd.DataFrame:
-    """Load trades from either a file path or a Streamlit UploadedFile."""
-    df = pd.read_csv(source, dtype={"trade_id": str})
+BREAK_TYPES: tuple[str, ...] = (
+    "quantity_mismatch",
+    "price_mismatch",
+    "settlement_date_mismatch",
+    "counterparty_mismatch",
+    "missing_in_broker",
+    "missing_in_ledger",
+)
 
-    df = df.drop_duplicates().copy()
-    df["trade_date"] = pd.to_datetime(df["trade_date"])
-    df["settlement_date"] = pd.to_datetime(df["settlement_date"])
-    df["quantity"] = pd.to_numeric(df["quantity"], errors="coerce").fillna(0).astype(int)
-    df["price"] = pd.to_numeric(df["price"], errors="coerce").fillna(0.0)
+SEVERITIES: tuple[str, ...] = ("HIGH", "MEDIUM", "LOW")
+_SEVERITY_RANK = {name: rank for rank, name in enumerate(SEVERITIES)}
 
-    return df
+# Field -> break type, in precedence order (used to pick the primary type when
+# one trade differs on several fields).
+_FIELD_BREAK_TYPE: dict[str, str] = {
+    "quantity": "quantity_mismatch",
+    "price": "price_mismatch",
+    "settlement_date": "settlement_date_mismatch",
+    "counterparty": "counterparty_mismatch",
+}
 
-def classify_severity(break_type: str, broker_value=None, ledger_value=None) -> str:
-    """Classify break severity based on type and mismatch size."""
-    if break_type in {"missing_in_broker", "missing_in_ledger", "duplicate_in_broker", "duplicate_in_ledger"}:
-        return "HIGH"
+BREAK_COLUMNS: tuple[str, ...] = (
+    "trade_id",
+    "break_type",
+    "severity",
+    "severity_reason",
+    "differing_fields",
+    "symbol",
+    "trade_date",
+    "break_date",
+    "broker_quantity",
+    "ledger_quantity",
+    "broker_price",
+    "ledger_price",
+    "broker_settlement_date",
+    "ledger_settlement_date",
+    "broker_counterparty",
+    "ledger_counterparty",
+    "broker_notional",
+    "ledger_notional",
+    "notional",
+)
 
-    if break_type == "quantity_mismatch":
-        if broker_value is None or ledger_value is None:
-            return "HIGH"
-        diff_pct = abs(broker_value - ledger_value) / max(abs(ledger_value), 1)
-        return "HIGH" if diff_pct >= 0.02 else "LOW"
 
-    if break_type == "price_mismatch":
-        if broker_value is None or ledger_value is None:
-            return "HIGH"
-        diff_pct = abs(broker_value - ledger_value) / max(abs(ledger_value), 0.01)
-        return "HIGH" if diff_pct >= 0.01 else "LOW"
+@dataclass(frozen=True)
+class ReconConfig:
+    """Tolerances and severity thresholds. All values are user-tunable.
 
-    if break_type == "settlement_date_mismatch":
-        return "MEDIUM"
+    Tolerances decide *whether* a field difference is a break; the remaining
+    thresholds decide *how severe* it is.
+    """
 
-    return "LOW"
+    price_tolerance_bps: float = 5.0
+    settlement_tolerance_days: int = 0
+    quantity_tolerance: float = 0.0
+    high_notional_threshold: float = 100_000.0
+    minor_price_bps: float = 25.0
+    minor_quantity: float = 5.0
 
 
-def reconcile_trades(broker_path: str, ledger_path: str) -> pd.DataFrame:
-    """Compare broker and ledger trades and return a DataFrame of breaks."""
-    broker = load_trades(broker_path)
-    ledger = load_trades(ledger_path)
+# --------------------------------------------------------------------------
+# Loading, validation and cleaning
+# --------------------------------------------------------------------------
+def load_trades_csv(source: Any) -> pd.DataFrame:
+    """Read a trades CSV from a path or file-like object.
 
-    broker_counts = broker["trade_id"].value_counts()
-    ledger_counts = ledger["trade_id"].value_counts()
+    Raises:
+        ValueError: if the file is empty or cannot be parsed as CSV.
+    """
+    try:
+        return pd.read_csv(source, dtype={"trade_id": str})
+    except pd.errors.EmptyDataError as exc:
+        raise ValueError("The file is empty.") from exc
+    except (pd.errors.ParserError, UnicodeDecodeError) as exc:
+        raise ValueError(f"The file is not a valid CSV ({exc}).") from exc
 
-    duplicate_breaks = []
-    for trade_id, count in broker_counts.items():
-        if count > 1:
-            duplicate_breaks.append({
-                "trade_id": trade_id,
-                "break_type": "duplicate_in_broker",
-                "broker_quantity": broker[broker["trade_id"] == trade_id]["quantity"].tolist(),
-                "ledger_quantity": None,
-                "broker_price": broker[broker["trade_id"] == trade_id]["price"].tolist(),
-                "ledger_price": None,
-                "broker_settlement_date": broker[broker["trade_id"] == trade_id]["settlement_date"].dt.strftime("%Y-%m-%d").tolist(),
-                "ledger_settlement_date": None,
-            })
 
-    for trade_id, count in ledger_counts.items():
-        if count > 1:
-            duplicate_breaks.append({
-                "trade_id": trade_id,
-                "break_type": "duplicate_in_ledger",
-                "broker_quantity": None,
-                "ledger_quantity": ledger[ledger["trade_id"] == trade_id]["quantity"].tolist(),
-                "broker_price": None,
-                "ledger_price": ledger[ledger["trade_id"] == trade_id]["price"].tolist(),
-                "broker_settlement_date": None,
-                "ledger_settlement_date": ledger[ledger["trade_id"] == trade_id]["settlement_date"].dt.strftime("%Y-%m-%d").tolist(),
-            })
+def validate_trades(df: pd.DataFrame) -> list[str]:
+    """Return human-readable schema problems (empty list means valid)."""
+    columns = {str(c).strip().lower() for c in df.columns}
+    missing = [c for c in REQUIRED_COLUMNS if c not in columns]
+    errors: list[str] = []
+    if missing:
+        errors.append("Missing required column(s): " + ", ".join(missing))
+    if df.empty:
+        errors.append("The file contains a header but no trade rows.")
+    return errors
 
-    broker_unique = broker.drop_duplicates(subset=["trade_id"]).set_index("trade_id")
-    ledger_unique = ledger.drop_duplicates(subset=["trade_id"]).set_index("trade_id")
 
-    all_ids = sorted(set(broker_unique.index) | set(ledger_unique.index))
-    break_rows = []
+def clean_trades(df: pd.DataFrame) -> pd.DataFrame:
+    """Normalise a raw trades frame.
 
-    for trade_id in all_ids:
-        broker_row = broker_unique.loc[trade_id] if trade_id in broker_unique.index else None
-        ledger_row = ledger_unique.loc[trade_id] if trade_id in ledger_unique.index else None
+    Lower-cases column names, drops rows with a blank ``trade_id``, coerces
+    types (unparseable values become NaN / NaT rather than raising), strips
+    text, and keeps the first row of any duplicated ``trade_id``.
+    """
+    errors = [e for e in validate_trades(df) if e.startswith("Missing")]
+    if errors:
+        raise ValueError(errors[0])
 
-        if broker_row is None:
-            break_rows.append({
-                "trade_id": trade_id,
-                "break_type": "missing_in_broker",
-                "broker_quantity": None,
-                "ledger_quantity": ledger_row["quantity"],
-                "broker_price": None,
-                "ledger_price": ledger_row["price"],
-                "broker_settlement_date": None,
-                "ledger_settlement_date": ledger_row["settlement_date"].strftime("%Y-%m-%d"),
-            })
-            continue
+    out = df.copy()
+    out.columns = [str(c).strip().lower() for c in out.columns]
+    out = out[list(REQUIRED_COLUMNS)]
 
-        if ledger_row is None:
-            break_rows.append({
-                "trade_id": trade_id,
-                "break_type": "missing_in_ledger",
-                "broker_quantity": broker_row["quantity"],
-                "ledger_quantity": None,
-                "broker_price": broker_row["price"],
-                "ledger_price": None,
-                "broker_settlement_date": broker_row["settlement_date"].strftime("%Y-%m-%d"),
-                "ledger_settlement_date": None,
-            })
-            continue
+    ids = out["trade_id"].astype("string").str.strip()
+    out = out.assign(trade_id=ids)
+    out = out[out["trade_id"].notna() & out["trade_id"].ne("")]
+    out["trade_id"] = out["trade_id"].astype(str)
 
-        if broker_row["quantity"] != ledger_row["quantity"]:
-            break_rows.append({
-                "trade_id": trade_id,
-                "break_type": "quantity_mismatch",
-                "broker_quantity": broker_row["quantity"],
-                "ledger_quantity": ledger_row["quantity"],
-                "broker_price": broker_row["price"],
-                "ledger_price": ledger_row["price"],
-                "broker_settlement_date": broker_row["settlement_date"].strftime("%Y-%m-%d"),
-                "ledger_settlement_date": ledger_row["settlement_date"].strftime("%Y-%m-%d"),
-            })
-            continue
+    for col in ("trade_date", "settlement_date"):
+        out[col] = pd.to_datetime(out[col], errors="coerce").dt.normalize()
+    for col in ("quantity", "price"):
+        out[col] = pd.to_numeric(out[col], errors="coerce").astype(float)
+    for col in ("symbol", "counterparty"):
+        out[col] = out[col].fillna("").astype(str).str.strip()
 
-        if round(broker_row["price"], 2) != round(ledger_row["price"], 2):
-            break_rows.append({
-                "trade_id": trade_id,
-                "break_type": "price_mismatch",
-                "broker_quantity": broker_row["quantity"],
-                "ledger_quantity": ledger_row["quantity"],
-                "broker_price": broker_row["price"],
-                "ledger_price": ledger_row["price"],
-                "broker_settlement_date": broker_row["settlement_date"].strftime("%Y-%m-%d"),
-                "ledger_settlement_date": ledger_row["settlement_date"].strftime("%Y-%m-%d"),
-            })
-            continue
+    out = out.drop_duplicates(subset="trade_id", keep="first")
+    return out.reset_index(drop=True)
 
-        if broker_row["settlement_date"] != ledger_row["settlement_date"]:
-            break_rows.append({
-                "trade_id": trade_id,
-                "break_type": "settlement_date_mismatch",
-                "broker_quantity": broker_row["quantity"],
-                "ledger_quantity": ledger_row["quantity"],
-                "broker_price": broker_row["price"],
-                "ledger_price": ledger_row["price"],
-                "broker_settlement_date": broker_row["settlement_date"].strftime("%Y-%m-%d"),
-                "ledger_settlement_date": ledger_row["settlement_date"].strftime("%Y-%m-%d"),
-            })
-    
-    break_rows.extend(duplicate_breaks)
 
-    for row in break_rows:
-        row["severity"] = classify_severity(
-            row["break_type"],
-            row.get("broker_quantity"),
-            row.get("ledger_quantity"),
+def data_quality(df: pd.DataFrame) -> dict[str, int]:
+    """Count data problems in a raw frame (before cleaning)."""
+    if not set(REQUIRED_COLUMNS) <= {str(c).strip().lower() for c in df.columns}:
+        return {"rows": len(df), "blank_ids": 0, "duplicate_ids": 0, "invalid_values": 0}
+    raw = df.copy()
+    raw.columns = [str(c).strip().lower() for c in raw.columns]
+    ids = raw["trade_id"].astype("string").str.strip()
+    blank = ids.isna() | ids.eq("")
+    dups = ids[~blank].duplicated().sum()
+    invalid = 0
+    for col in ("trade_date", "settlement_date"):
+        invalid += int((pd.to_datetime(raw[col], errors="coerce").isna() & raw[col].notna()).sum())
+    for col in ("quantity", "price"):
+        invalid += int((pd.to_numeric(raw[col], errors="coerce").isna() & raw[col].notna()).sum())
+    return {
+        "rows": int(len(raw)),
+        "blank_ids": int(blank.sum()),
+        "duplicate_ids": int(dups),
+        "invalid_values": invalid,
+    }
+
+
+def count_unique_trades(broker: pd.DataFrame, ledger: pd.DataFrame) -> int:
+    """Number of distinct trade_ids across both (raw) frames."""
+    ids = pd.concat([clean_trades(broker)["trade_id"], clean_trades(ledger)["trade_id"]])
+    return int(ids.nunique())
+
+
+# --------------------------------------------------------------------------
+# Field comparison (vectorised)
+# --------------------------------------------------------------------------
+def _nan_mismatch(a: pd.Series, b: pd.Series) -> pd.Series:
+    """True where exactly one side is null."""
+    return a.isna() ^ b.isna()
+
+
+def quantity_mismatch_mask(b: pd.Series, l: pd.Series, tolerance: float) -> pd.Series:
+    """Quantity differs by more than ``tolerance`` units (or one side is null)."""
+    diff = (b - l).abs().round(9)
+    return _nan_mismatch(b, l) | (diff > tolerance)
+
+
+def price_diff_bps(b: pd.Series, l: pd.Series) -> pd.Series:
+    """Absolute price difference in basis points of the ledger price."""
+    diff = (b - l).abs()
+    denom = l.abs()
+    with np.errstate(divide="ignore", invalid="ignore"):
+        bps = np.where(denom > 0, diff / denom * 1e4, np.where(diff > 0, np.inf, 0.0))
+    return pd.Series(bps, index=b.index).round(9)
+
+
+def price_mismatch_mask(b: pd.Series, l: pd.Series, tolerance_bps: float) -> pd.Series:
+    """Price differs by more than ``tolerance_bps`` (or one side is null)."""
+    return _nan_mismatch(b, l) | (price_diff_bps(b, l) > tolerance_bps)
+
+
+def date_mismatch_mask(b: pd.Series, l: pd.Series, tolerance_days: int) -> pd.Series:
+    """Dates differ by more than ``tolerance_days`` calendar days (or one is null)."""
+    days = (b - l).dt.days.abs()
+    return _nan_mismatch(b, l) | (days > tolerance_days)
+
+
+def text_mismatch_mask(b: pd.Series, l: pd.Series) -> pd.Series:
+    """Case-insensitive text inequality."""
+    return b.fillna("").str.casefold() != l.fillna("").str.casefold()
+
+
+# --------------------------------------------------------------------------
+# Severity
+# --------------------------------------------------------------------------
+def _notional(quantity: Any, price: Any) -> float:
+    """Quantity x price, or 0.0 if either is missing."""
+    if pd.isna(quantity) or pd.isna(price):
+        return 0.0
+    return float(abs(quantity) * price)
+
+
+def field_severity(field: str, row: pd.Series, notional: float, cfg: ReconConfig) -> tuple[str, str]:
+    """Severity and plain-English reason for one differing field of a matched trade."""
+    if notional >= cfg.high_notional_threshold:
+        return "HIGH", (
+            f"Notional {notional:,.0f} is at or above the HIGH threshold "
+            f"({cfg.high_notional_threshold:,.0f})."
         )
+    if field == "quantity":
+        gap = abs(row["quantity_broker"] - row["quantity_ledger"])
+        if gap <= cfg.minor_quantity:
+            return "LOW", f"Quantity differs by {gap:g}, within the minor limit of {cfg.minor_quantity:g}."
+        return "MEDIUM", f"Quantity differs by {gap:g}, above the minor limit of {cfg.minor_quantity:g}."
+    if field == "price":
+        bps = float(price_diff_bps(pd.Series([row["price_broker"]]), pd.Series([row["price_ledger"]])).iloc[0])
+        if bps <= cfg.minor_price_bps:
+            return "LOW", f"Price differs by {bps:.1f} bps, within the minor limit of {cfg.minor_price_bps:g} bps."
+        return "MEDIUM", f"Price differs by {bps:.1f} bps, above the minor limit of {cfg.minor_price_bps:g} bps."
+    if field == "counterparty":
+        return "MEDIUM", "Counterparty differs between broker and ledger; settlement may go to the wrong party."
+    return "LOW", "Settlement date differs; no change to economics, but timing risk."
 
-    return pd.DataFrame(break_rows)
+
+def classify_break(row: pd.Series, fields: list[str], cfg: ReconConfig) -> tuple[str, str, str]:
+    """Return ``(break_type, severity, reason)`` for one broken trade.
+
+    ``row`` is a merged row (``*_broker`` / ``*_ledger`` columns, plus ``_merge``).
+    ``fields`` lists the differing fields for trades present on both sides.
+    """
+    if row["_merge"] == "left_only":
+        return "missing_in_ledger", "HIGH", "Broker reports this trade but it is not booked in the ledger."
+    if row["_merge"] == "right_only":
+        return "missing_in_broker", "HIGH", "Ledger holds this trade but the broker has no matching record."
+
+    notional = _notional(row["quantity_broker"], row["price_broker"])
+    assessed = [(f, *field_severity(f, row, notional, cfg)) for f in fields]
+    # The most severe field defines the break; ties keep field precedence order.
+    best = min(assessed, key=lambda a: _SEVERITY_RANK[a[1]])
+    return _FIELD_BREAK_TYPE[best[0]], best[1], best[2]
+
+
+# --------------------------------------------------------------------------
+# Reconciliation
+# --------------------------------------------------------------------------
+def _empty_breaks() -> pd.DataFrame:
+    return pd.DataFrame({c: pd.Series(dtype="object") for c in BREAK_COLUMNS})
+
+
+def _differing_fields(m: pd.DataFrame, cfg: ReconConfig) -> pd.DataFrame:
+    """Boolean frame (one column per compared field) for rows present on both sides."""
+    both = m["_merge"] == "both"
+    masks = {
+        "quantity": quantity_mismatch_mask(m["quantity_broker"], m["quantity_ledger"], cfg.quantity_tolerance),
+        "price": price_mismatch_mask(m["price_broker"], m["price_ledger"], cfg.price_tolerance_bps),
+        "settlement_date": date_mismatch_mask(
+            m["settlement_date_broker"], m["settlement_date_ledger"], cfg.settlement_tolerance_days
+        ),
+        "counterparty": text_mismatch_mask(m["counterparty_broker"], m["counterparty_ledger"]),
+    }
+    return pd.DataFrame({k: v & both for k, v in masks.items()})
+
+
+def _build_break_row(row: pd.Series, fields: list[str], cfg: ReconConfig) -> dict[str, Any]:
+    """Assemble the output record for one broken trade."""
+    break_type, severity, reason = classify_break(row, fields, cfg)
+    b_notional = _notional(row["quantity_broker"], row["price_broker"]) if row["_merge"] != "right_only" else np.nan
+    l_notional = _notional(row["quantity_ledger"], row["price_ledger"]) if row["_merge"] != "left_only" else np.nan
+    from_broker = row["_merge"] != "right_only"
+    pick = (lambda col: row[f"{col}_broker"]) if from_broker else (lambda col: row[f"{col}_ledger"])
+    return {
+        "trade_id": row["trade_id"],
+        "break_type": break_type,
+        "severity": severity,
+        "severity_reason": reason,
+        "differing_fields": ",".join(fields),
+        "symbol": pick("symbol"),
+        "trade_date": pick("trade_date"),
+        "break_date": pick("settlement_date"),
+        "broker_quantity": row["quantity_broker"],
+        "ledger_quantity": row["quantity_ledger"],
+        "broker_price": row["price_broker"],
+        "ledger_price": row["price_ledger"],
+        "broker_settlement_date": row["settlement_date_broker"],
+        "ledger_settlement_date": row["settlement_date_ledger"],
+        "broker_counterparty": row["counterparty_broker"] if from_broker else np.nan,
+        "ledger_counterparty": row["counterparty_ledger"] if row["_merge"] != "left_only" else np.nan,
+        "broker_notional": b_notional,
+        "ledger_notional": l_notional,
+        "notional": b_notional if from_broker else l_notional,
+    }
+
+
+def reconcile(broker: pd.DataFrame, ledger: pd.DataFrame, config: Optional[ReconConfig] = None) -> pd.DataFrame:
+    """Compare broker and ledger trades and return one row per break.
+
+    Args:
+        broker: raw broker trades (see :data:`REQUIRED_COLUMNS`).
+        ledger: raw internal-ledger trades.
+        config: tolerances and severity thresholds (defaults used if omitted).
+
+    Returns:
+        A DataFrame with :data:`BREAK_COLUMNS`, sorted by severity then trade_id.
+        Empty (but with all columns) when there are no breaks.
+
+    Raises:
+        ValueError: if either frame lacks a required column.
+    """
+    cfg = config or ReconConfig()
+    b = clean_trades(broker)
+    l = clean_trades(ledger)
+    merged = b.merge(l, on="trade_id", how="outer", suffixes=("_broker", "_ledger"), indicator=True)
+    if merged.empty:
+        return _empty_breaks()
+
+    flags = _differing_fields(merged, cfg)
+    broken = (merged["_merge"] != "both") | flags.any(axis=1)
+    if not broken.any():
+        return _empty_breaks()
+
+    records = []
+    for idx in merged.index[broken]:
+        fields = [f for f in _FIELD_BREAK_TYPE if flags.at[idx, f]]
+        records.append(_build_break_row(merged.loc[idx], fields, cfg))
+
+    out = pd.DataFrame.from_records(records, columns=list(BREAK_COLUMNS))
+    out["_rank"] = out["severity"].map(_SEVERITY_RANK)
+    out = out.sort_values(["_rank", "trade_id"], kind="stable").drop(columns="_rank")
+    return out.reset_index(drop=True)
 
 
 if __name__ == "__main__":
-    breaks = reconcile_trades("broker_trades.csv", "internal_ledger.csv")
-    print(f"Found {len(breaks)} breaks")
-    print(breaks[["break_type", "severity"]].value_counts())
+    result = reconcile(load_trades_csv("broker_trades.csv"), load_trades_csv("internal_ledger.csv"))
+    print(f"Found {len(result)} breaks")
+    print(result[["break_type", "severity"]].value_counts())
