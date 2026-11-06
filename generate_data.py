@@ -1,9 +1,3 @@
-"""Generate reproducible synthetic broker and ledger trade files.
-
-Run ``python generate_data.py`` to (re)write ``broker_trades.csv`` and
-``internal_ledger.csv``. The seed is fixed, so output is identical each run.
-All data is synthetic; counterparty names are generic placeholders.
-"""
 from __future__ import annotations
 
 import random
@@ -46,12 +40,10 @@ BREAK_PLAN = (
 
 
 def _business_day(start: date, offset: int) -> date:
-    """Return ``start`` shifted by ``offset`` business days."""
     return pd.Timestamp(np.busday_offset(start.isoformat(), offset, roll="forward")).date()
 
 
 def generate_records(rng: random.Random, count: int = TRADE_COUNT) -> list[dict[str, Any]]:
-    """Create ``count`` clean trades (identical on broker and ledger sides)."""
     symbols = list(SYMBOLS_BASE_PRICE)
     records = []
     for i in range(1, count + 1):
@@ -70,7 +62,6 @@ def generate_records(rng: random.Random, count: int = TRADE_COUNT) -> list[dict[
 
 
 def _apply_break(kind: str, rec: dict[str, Any], rng: random.Random) -> None:
-    """Mutate a ledger record in place to create the requested break."""
     if kind == "quantity_minor":
         rec["quantity"] += rng.choice([-2, -1, 1, 2])
     elif kind == "quantity_major":
@@ -89,7 +80,6 @@ def _apply_break(kind: str, rec: dict[str, Any], rng: random.Random) -> None:
 def introduce_mismatches(
     broker: list[dict[str, Any]], ledger: list[dict[str, Any]], rng: random.Random
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    """Inject breaks, sub-tolerance noise and exact duplicates into the ledger side."""
     ids = [r["trade_id"] for r in broker]
     plan = list(BREAK_PLAN)
     rng.shuffle(plan)
@@ -118,7 +108,6 @@ def introduce_mismatches(
 
 
 def save_csv(records: list[dict[str, Any]], filename: str) -> None:
-    """Write records to CSV."""
     pd.DataFrame(records).to_csv(filename, index=False)
     print(f"Saved {len(records)} records to {filename}")
 

@@ -1,4 +1,3 @@
-"""Tests for the pure KPI helpers."""
 import pandas as pd
 
 from metrics import attach_status, compute_kpis, format_currency, format_inr, status_counts

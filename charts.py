@@ -1,4 +1,3 @@
-"""Plotly figures. Pure functions: DataFrame in, Figure out (no Streamlit)."""
 from __future__ import annotations
 
 import pandas as pd
@@ -18,7 +17,6 @@ _LAYOUT = dict(
 
 
 def _axes(fig: go.Figure) -> go.Figure:
-    """Remove gridlines; keep a quiet baseline."""
     fig.update_xaxes(showgrid=False, zeroline=False, linecolor=t.BORDER, tickfont=dict(color=t.MUTED))
     fig.update_yaxes(showgrid=False, zeroline=False, tickfont=dict(color=t.MUTED))
     return fig
@@ -32,7 +30,6 @@ def _empty(message: str) -> go.Figure:
 
 
 def severity_donut(breaks: pd.DataFrame) -> go.Figure:
-    """Donut of break counts by severity, with the total in the centre."""
     if breaks.empty:
         return _empty("No breaks")
     counts = breaks["severity"].value_counts().reindex(t.SEVERITY_ORDER).dropna().astype(int)
@@ -51,7 +48,6 @@ def severity_donut(breaks: pd.DataFrame) -> go.Figure:
 
 
 def breaks_by_type_bar(breaks: pd.DataFrame) -> go.Figure:
-    """Horizontal stacked bars: one bar per break type, split by severity, largest on top."""
     if breaks.empty:
         return _empty("No breaks")
     table = breaks.pivot_table(index="break_type", columns="severity", values="trade_id",
@@ -69,7 +65,6 @@ def breaks_by_type_bar(breaks: pd.DataFrame) -> go.Figure:
 
 
 def daily_breaks_chart(breaks: pd.DataFrame, window: int = 7) -> go.Figure:
-    """Daily break counts (stacked by severity) with a trailing moving-average line."""
     if breaks.empty:
         return _empty("No breaks")
     daily = (breaks.assign(day=breaks["break_date"].dt.normalize())

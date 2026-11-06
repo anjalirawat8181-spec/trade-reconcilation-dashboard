@@ -1,4 +1,3 @@
-"""Pure dashboard maths (no Streamlit): KPIs, status handling, formatting."""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -20,7 +19,6 @@ DEFAULT_STATUS = "Open"
 
 @dataclass(frozen=True)
 class Kpis:
-    """Headline numbers shown on the Overview tab."""
 
     match_rate_pct: Optional[float]
     open_breaks: int
@@ -29,14 +27,12 @@ class Kpis:
 
 
 def attach_status(breaks: pd.DataFrame, statuses: Mapping[str, str]) -> pd.DataFrame:
-    """Return ``breaks`` with a ``status`` column (default ``Open``)."""
     out = breaks.copy()
     out["status"] = out["trade_id"].map(statuses).fillna(DEFAULT_STATUS)
     return out
 
 
 def latest_settlement(broker: pd.DataFrame, ledger: pd.DataFrame) -> Optional[pd.Timestamp]:
-    """Latest settlement date across both datasets; used as the 'as of' date for ageing."""
     dates = pd.concat([clean_trades(broker)["settlement_date"], clean_trades(ledger)["settlement_date"]])
     latest = dates.max()
     return None if pd.isna(latest) else latest
@@ -45,12 +41,6 @@ def latest_settlement(broker: pd.DataFrame, ledger: pd.DataFrame) -> Optional[pd
 def compute_kpis(
     breaks: pd.DataFrame, total_trades: int, as_of: Optional[pd.Timestamp]
 ) -> Kpis:
-    """Headline KPIs. ``breaks`` must carry a ``status`` column.
-
-    * Match rate: share of unique trades with no break (resolution does not change it).
-    * Open breaks / notional: every break whose status is not ``Resolved``.
-    * Oldest open break: days between its settlement date and ``as_of``.
-    """
     match_rate = None if total_trades <= 0 else round(100 * (1 - len(breaks) / total_trades), 1)
     open_breaks = breaks[breaks["status"] != "Resolved"]
     oldest: Optional[int] = None
@@ -65,13 +55,11 @@ def compute_kpis(
 
 
 def status_counts(breaks: pd.DataFrame) -> dict[str, int]:
-    """Number of breaks per status, in display order (zeros included)."""
     counts = breaks["status"].value_counts()
     return {s: int(counts.get(s, 0)) for s in STATUSES}
 
 
 def _indian_group(value: int) -> str:
-    """Format an integer using Indian grouping (e.g. 1234567 -> 12,34,567)."""
     s = str(abs(int(value)))
     if len(s) <= 3:
         return s
@@ -90,7 +78,6 @@ def _indian_group(value: int) -> str:
 
 
 def format_inr(value: Optional[float], compact: bool = False) -> str:
-    """Format rupee values with Indian grouping. ``compact=True`` returns L/Cr suffixes."""
     if value is None or pd.isna(value):
         return "—"
     try:
@@ -122,5 +109,4 @@ def format_inr(value: Optional[float], compact: bool = False) -> str:
 
 
 def format_currency(value: Optional[float]) -> str:
-    """Compatibility alias for the INR formatter used throughout the app."""
     return format_inr(value)

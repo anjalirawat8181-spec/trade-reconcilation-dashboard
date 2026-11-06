@@ -1,4 +1,3 @@
-"""Tests for the pure reconciliation engine."""
 from __future__ import annotations
 
 import io
@@ -29,7 +28,6 @@ BASE = {
 
 
 def trades(*overrides: dict) -> pd.DataFrame:
-    """Build a trades frame; each override dict patches the BASE row."""
     return pd.DataFrame([{**BASE, **o} for o in overrides])
 
 

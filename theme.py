@@ -1,9 +1,3 @@
-"""Single source of truth for the visual palette and presentation labels.
-
-Colours are defined once here and reused by the CSS (styles.py), the charts
-(charts.py) and the table badges (app.py). The same hex values appear in
-.streamlit/config.toml, which Streamlit reads before Python runs.
-"""
 from __future__ import annotations
 
 NAVY = "#0D1B2A"
@@ -38,5 +32,4 @@ BREAK_TYPE_LABELS: dict[str, str] = {
 
 
 def tint(color: str, alpha_hex: str = "1F") -> str:
-    """Return ``color`` with an 8-digit-hex alpha suffix (default ~12% opacity)."""
     return f"{color}{alpha_hex}"

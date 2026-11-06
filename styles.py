@@ -1,4 +1,3 @@
-"""Custom CSS for the workbench, built from the palette in theme.py."""
 from __future__ import annotations
 
 import streamlit as st
@@ -7,7 +6,6 @@ import theme as t
 
 
 def build_css() -> str:
-    """Return the full <style> block."""
     return f"""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,400;6..72,500&family=Tinos:wght@400;700&display=swap');
@@ -94,8 +92,6 @@ footer, [data-testid="stFooter"] {{ visibility: hidden; height: 0; }}
   background: {t.ACCENT}; color: {t.NAVY}; border: 1px solid {t.ACCENT}; border-radius: var(--radius); font-weight: 600; }}
 [data-testid="stFileUploadDropzone"] button:hover:not(:disabled), [data-testid="stFileUploaderDropzone"] button:hover:not(:disabled) {{
   background: #6A90BE; border-color: #6A90BE; color: #0D1B2A; }}
-[data-testid="stFileUploadDropzone"] button:disabled, [data-testid="stFileUploaderDropzone"] button:disabled {{
-  background: #B9C9DC; border-color: #B9C9DC; color: {t.NAVY}; opacity: 1; cursor: not-allowed; }}
 [data-testid="stFileUploader"] ul {{ list-style: none; padding: 0; margin: .5rem 0 0; }}
 [data-testid="stFileUploader"] li, [data-testid="stFileUploader"] [data-testid="stUploadedFile"] {{
   background: #FFFFFF; border: 1px solid #D5DDE6; border-radius: var(--radius); padding: .3rem .5rem; margin-bottom: .35rem; }}
@@ -148,5 +144,4 @@ a {{ color: var(--accent); }}
 
 
 def inject_styles() -> None:
-    """Inject the stylesheet into the running Streamlit app."""
     st.markdown(build_css(), unsafe_allow_html=True)

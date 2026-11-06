@@ -1,8 +1,3 @@
-"""Settlement Reconciliation Workbench: Streamlit UI only.
-
-All reconciliation logic lives in recon_engine.py, KPI maths in metrics.py,
-charts in charts.py, palette in theme.py and CSS in styles.py.
-"""
 from __future__ import annotations
 
 import io
@@ -30,7 +25,6 @@ inject_styles()
 
 @dataclass
 class Dataset:
-    """Validated broker + ledger frames, plus notes about data quality."""
 
     broker: pd.DataFrame
     ledger: pd.DataFrame
@@ -38,7 +32,6 @@ class Dataset:
 
 
 def _read_upload(label: str, upload) -> tuple[Optional[pd.DataFrame], list[str]]:
-    """Parse and validate one uploaded CSV; return (frame, error messages)."""
     try:
         df = engine.load_trades_csv(io.BytesIO(upload.getvalue()))
     except ValueError as exc:
@@ -59,14 +52,28 @@ def _quality_notes(label: str, df: pd.DataFrame) -> list[str]:
     return [f"{label}: {q[key]} {text}" for key, text in checks if q[key]]
 
 
+def _switch_off_sample() -> None:
+    st.session_state["use_sample"] = False
+
+
+def _clear_uploads() -> None:
+    st.session_state["upload_gen"] = st.session_state.get("upload_gen", 0) + 1
+    st.session_state["use_sample"] = True
+
+
 def sidebar_controls() -> tuple[Optional[Dataset], engine.ReconConfig]:
-    """Render the sidebar; return the dataset (None if not ready) and tolerances."""
     sb = st.sidebar
     sb.markdown("### Data")
-    use_sample = sb.toggle("Use sample data", value=True)
-    broker_up = sb.file_uploader("Broker trades (CSV)", type="csv", disabled=use_sample, key="broker_up")
-    ledger_up = sb.file_uploader("Ledger trades (CSV)", type="csv", disabled=use_sample, key="ledger_up")
+    gen = st.session_state.get("upload_gen", 0)
+    use_sample = sb.toggle("Use sample data", value=True, key="use_sample")
+
+    broker_up = sb.file_uploader("Broker trades (CSV)", type="csv",
+                                 key=f"broker_up_{gen}", on_change=_switch_off_sample)
+    ledger_up = sb.file_uploader("Ledger trades (CSV)", type="csv",
+                                 key=f"ledger_up_{gen}", on_change=_switch_off_sample)
     sb.caption("Required columns: " + ", ".join(engine.REQUIRED_COLUMNS))
+    sb.button("Clear uploads / Back to sample data", on_click=_clear_uploads,
+              use_container_width=True)
 
     sb.markdown("---")
     sb.markdown("### Tolerances")
@@ -78,15 +85,26 @@ def sidebar_controls() -> tuple[Optional[Dataset], engine.ReconConfig]:
     )
 
     dataset = None
-    if use_sample:
-        broker, ledger = engine.load_trades_csv(SAMPLE_BROKER), engine.load_trades_csv(SAMPLE_LEDGER)
-    elif broker_up is None or ledger_up is None:
-        broker = ledger = None
-    else:
+    both = broker_up is not None and ledger_up is not None
+    if both and not use_sample:
         broker, errors_b = _read_upload("Broker file", broker_up)
         ledger, errors_l = _read_upload("Ledger file", ledger_up)
+        if errors_b or errors_l:
+            sb.caption("Your uploaded files could not be used:")
+        else:
+            sb.caption(f"Using your uploaded files: {broker_up.name}, {ledger_up.name}")
         for message in errors_b + errors_l:
             sb.error(message)
+    else:
+
+        if broker_up is None and ledger_up is not None:
+            sb.warning("Upload the broker file too, or turn on sample data.")
+        elif ledger_up is None and broker_up is not None:
+            sb.warning("Upload the ledger file too, or turn on sample data.")
+        elif not both:
+            sb.caption("Upload both a broker and a ledger CSV to use your own data.")
+        sb.caption("Using sample data")
+        broker, ledger = engine.load_trades_csv(SAMPLE_BROKER), engine.load_trades_csv(SAMPLE_LEDGER)
     if broker is not None and ledger is not None:
         notes = _quality_notes("Broker", broker) + _quality_notes("Ledger", ledger)
         dataset = Dataset(broker, ledger, notes)
@@ -99,7 +117,6 @@ def sidebar_controls() -> tuple[Optional[Dataset], engine.ReconConfig]:
 
 
 def init_state(breaks: pd.DataFrame) -> None:
-    """Reset statuses/notes when the set of breaks changes (new data or tolerances)."""
     signature = hash(tuple(breaks["trade_id"]))
     if st.session_state.get("signature") != signature:
         st.session_state.update(signature=signature, statuses={}, notes={})
@@ -196,7 +213,6 @@ def _severity_style(value: str) -> str:
 
 
 def styled_table(df: pd.DataFrame):
-    """Pandas Styler: formatted numbers/dates, em dash for nulls, coloured severity."""
     view = df[list(TABLE_COLUMNS)].copy()
     view["break_type"] = view["break_type"].map(t.BREAK_TYPE_LABELS)
     formats = {
@@ -329,7 +345,7 @@ def main() -> None:
     render_header()
     dataset, cfg = sidebar_controls()
     if dataset is None:
-        st.info("Upload both a broker and a ledger CSV in the sidebar, or switch on **Use sample data**.")
+        st.info("Fix the uploaded file(s) listed in the sidebar, or use **Clear uploads / Back to sample data**.")
         return
 
     breaks = engine.reconcile(dataset.broker, dataset.ledger, cfg)

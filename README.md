@@ -68,7 +68,7 @@ Python 3.10 (see `runtime.txt`).
 
 ```bash
 python -m venv .venv
-.venv/Scripts/activate        # Windows; use `source .venv/bin/activate` on macOS/Linux
+.venv/Scripts/activate
 pip install -r requirements.txt
 streamlit run app.py
 ```

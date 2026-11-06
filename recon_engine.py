@@ -1,13 +1,3 @@
-"""Pure reconciliation engine: broker trades vs. internal ledger.
-
-No Streamlit (or any UI) imports live here. The public entry point is
-:func:`reconcile`, which takes two DataFrames and a :class:`ReconConfig` and
-returns one row per broken trade.
-
-Matching key: ``trade_id``. A trade present on both sides is compared field by
-field (quantity, price, settlement date, counterparty). A trade present on one
-side only is a ``missing_in_*`` break.
-"""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -72,11 +62,6 @@ BREAK_COLUMNS: tuple[str, ...] = (
 
 @dataclass(frozen=True)
 class ReconConfig:
-    """Tolerances and severity thresholds. All values are user-tunable.
-
-    Tolerances decide *whether* a field difference is a break; the remaining
-    thresholds decide *how severe* it is.
-    """
 
     price_tolerance_bps: float = 5.0
     settlement_tolerance_days: int = 0
@@ -88,11 +73,6 @@ class ReconConfig:
 
 
 def load_trades_csv(source: Any) -> pd.DataFrame:
-    """Read a trades CSV from a path or file-like object.
-
-    Raises:
-        ValueError: if the file is empty or cannot be parsed as CSV.
-    """
     try:
         return pd.read_csv(source, dtype={"trade_id": str})
     except pd.errors.EmptyDataError as exc:
@@ -102,7 +82,6 @@ def load_trades_csv(source: Any) -> pd.DataFrame:
 
 
 def validate_trades(df: pd.DataFrame) -> list[str]:
-    """Return human-readable schema problems (empty list means valid)."""
     columns = {str(c).strip().lower() for c in df.columns}
     missing = [c for c in REQUIRED_COLUMNS if c not in columns]
     errors: list[str] = []
@@ -114,12 +93,6 @@ def validate_trades(df: pd.DataFrame) -> list[str]:
 
 
 def clean_trades(df: pd.DataFrame) -> pd.DataFrame:
-    """Normalise a raw trades frame.
-
-    Lower-cases column names, drops rows with a blank ``trade_id``, coerces
-    types (unparseable values become NaN / NaT rather than raising), strips
-    text, and keeps the first row of any duplicated ``trade_id``.
-    """
     errors = [e for e in validate_trades(df) if e.startswith("Missing")]
     if errors:
         raise ValueError(errors[0])
@@ -145,7 +118,6 @@ def clean_trades(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def data_quality(df: pd.DataFrame) -> dict[str, int]:
-    """Count data problems in a raw frame (before cleaning)."""
     if not set(REQUIRED_COLUMNS) <= {str(c).strip().lower() for c in df.columns}:
         return {"rows": len(df), "blank_ids": 0, "duplicate_ids": 0, "invalid_values": 0}
     raw = df.copy()
@@ -167,24 +139,20 @@ def data_quality(df: pd.DataFrame) -> dict[str, int]:
 
 
 def count_unique_trades(broker: pd.DataFrame, ledger: pd.DataFrame) -> int:
-    """Number of distinct trade_ids across both (raw) frames."""
     ids = pd.concat([clean_trades(broker)["trade_id"], clean_trades(ledger)["trade_id"]])
     return int(ids.nunique())
 
 
 def _nan_mismatch(a: pd.Series, b: pd.Series) -> pd.Series:
-    """True where exactly one side is null."""
     return a.isna() ^ b.isna()
 
 
 def quantity_mismatch_mask(b: pd.Series, l: pd.Series, tolerance: float) -> pd.Series:
-    """Quantity differs by more than ``tolerance`` units (or one side is null)."""
     diff = (b - l).abs().round(9)
     return _nan_mismatch(b, l) | (diff > tolerance)
 
 
 def price_diff_bps(b: pd.Series, l: pd.Series) -> pd.Series:
-    """Absolute price difference in basis points of the ledger price."""
     diff = (b - l).abs()
     denom = l.abs()
     with np.errstate(divide="ignore", invalid="ignore"):
@@ -193,30 +161,25 @@ def price_diff_bps(b: pd.Series, l: pd.Series) -> pd.Series:
 
 
 def price_mismatch_mask(b: pd.Series, l: pd.Series, tolerance_bps: float) -> pd.Series:
-    """Price differs by more than ``tolerance_bps`` (or one side is null)."""
     return _nan_mismatch(b, l) | (price_diff_bps(b, l) > tolerance_bps)
 
 
 def date_mismatch_mask(b: pd.Series, l: pd.Series, tolerance_days: int) -> pd.Series:
-    """Dates differ by more than ``tolerance_days`` calendar days (or one is null)."""
     days = (b - l).dt.days.abs()
     return _nan_mismatch(b, l) | (days > tolerance_days)
 
 
 def text_mismatch_mask(b: pd.Series, l: pd.Series) -> pd.Series:
-    """Case-insensitive text inequality."""
     return b.fillna("").str.casefold() != l.fillna("").str.casefold()
 
 
 def _notional(quantity: Any, price: Any) -> float:
-    """Quantity x price, or 0.0 if either is missing."""
     if pd.isna(quantity) or pd.isna(price):
         return 0.0
     return float(abs(quantity) * price)
 
 
 def field_severity(field: str, row: pd.Series, notional: float, cfg: ReconConfig) -> tuple[str, str]:
-    """Severity and plain-English reason for one differing field of a matched trade."""
     if notional >= cfg.high_notional_threshold:
         return "HIGH", (
             f"Notional {t.CURRENCY_SYMBOL}{notional:,.0f} is at or above the HIGH threshold "
@@ -243,11 +206,6 @@ def field_severity(field: str, row: pd.Series, notional: float, cfg: ReconConfig
 
 
 def classify_break(row: pd.Series, fields: list[str], cfg: ReconConfig) -> tuple[str, str, str]:
-    """Return ``(break_type, severity, reason)`` for one broken trade.
-
-    ``row`` is a merged row (``*_broker`` / ``*_ledger`` columns, plus ``_merge``).
-    ``fields`` lists the differing fields for trades present on both sides.
-    """
     if row["_merge"] == "left_only":
         return "missing_in_ledger", "HIGH", "Broker reports this trade but it is not booked in the ledger."
     if row["_merge"] == "right_only":
@@ -264,7 +222,6 @@ def _empty_breaks() -> pd.DataFrame:
 
 
 def _differing_fields(m: pd.DataFrame, cfg: ReconConfig) -> pd.DataFrame:
-    """Boolean frame (one column per compared field) for rows present on both sides."""
     both = m["_merge"] == "both"
     masks = {
         "quantity": quantity_mismatch_mask(m["quantity_broker"], m["quantity_ledger"], cfg.quantity_tolerance),
@@ -278,7 +235,6 @@ def _differing_fields(m: pd.DataFrame, cfg: ReconConfig) -> pd.DataFrame:
 
 
 def _build_break_row(row: pd.Series, fields: list[str], cfg: ReconConfig) -> dict[str, Any]:
-    """Assemble the output record for one broken trade."""
     break_type, severity, reason = classify_break(row, fields, cfg)
     b_notional = _notional(row["quantity_broker"], row["price_broker"]) if row["_merge"] != "right_only" else np.nan
     l_notional = _notional(row["quantity_ledger"], row["price_ledger"]) if row["_merge"] != "left_only" else np.nan
@@ -308,20 +264,6 @@ def _build_break_row(row: pd.Series, fields: list[str], cfg: ReconConfig) -> dic
 
 
 def reconcile(broker: pd.DataFrame, ledger: pd.DataFrame, config: Optional[ReconConfig] = None) -> pd.DataFrame:
-    """Compare broker and ledger trades and return one row per break.
-
-    Args:
-        broker: raw broker trades (see :data:`REQUIRED_COLUMNS`).
-        ledger: raw internal-ledger trades.
-        config: tolerances and severity thresholds (defaults used if omitted).
-
-    Returns:
-        A DataFrame with :data:`BREAK_COLUMNS`, sorted by severity then trade_id.
-        Empty (but with all columns) when there are no breaks.
-
-    Raises:
-        ValueError: if either frame lacks a required column.
-    """
     cfg = config or ReconConfig()
     b = clean_trades(broker)
     l = clean_trades(ledger)
